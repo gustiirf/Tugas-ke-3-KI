@@ -94,7 +94,7 @@ def generateKeyPair(bits=2048, e=65537):
     half = bits // 2
     
     p = generatePrime(half)
-    q = generatePrime(bits-half)
+    q = generatePrime(bits - half)
     
     n = p*q
     phi_n = (p-1) * (q-1)
@@ -162,7 +162,7 @@ class rsa():
         
         bytes_msg = intToByte(msg_number)
         bytes_msg = bytes_msg.lstrip(b'\x00')
-        string_msg = bytes_msg.decode("utf-8", errors="ignore")
+        string_msg = bytes_msg.decode("utf-8")
         
         return string_msg
 
