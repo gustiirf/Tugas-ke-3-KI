@@ -19,11 +19,11 @@ my_pu, my_pr = RSA.generateKeyPair()
 user_password = None
 user_cache = {}
 
-def parse_target(payload):
+def parseData(payload):
     e, n, ip, port = payload.split("|")
     return (int(e), int(n)), ip, int(port)
 
-def fetch_authority_pubkey():
+def fetchAuthPU():
     global authority_pu
 
     try:
@@ -47,7 +47,7 @@ def fetch_authority_pubkey():
         print("[ERROR] Failed to fetch authority public key:", e)
         sys.exit(1)
 
-def get_local_ip():
+def getLocalIP():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -61,7 +61,7 @@ def register_user(username, port):
     global user_password
 
     s = socket.create_connection((CHAT_HOST, CHAT_PORT))
-    my_ip = get_local_ip()
+    my_ip = getLocalIP()
     payload = {
         "type": "register",
         "username": username,
@@ -82,7 +82,7 @@ def register_user(username, port):
         print("[CLIENT] Registration failed")
         sys.exit(1)
 
-def get_user_auth(username):
+def getUserAuth(username):
     if username in user_cache:
         return user_cache[username]
 
@@ -101,12 +101,12 @@ def get_user_auth(username):
     if not rsa_crypto.verify(payload_str, sig_int, authority_pu):
         raise RuntimeError("Authority signature invalid!")
 
-    pu_target, ip_target, port_target = parse_target(payload_str)
+    pu_target, ip_target, port_target = parseData(payload_str)
     user_cache[username] = (pu_target, ip_target, port_target)
     return user_cache[username]
 
 
-def listener_thread(port):
+def listenerThread(port):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(("0.0.0.0", port))
     srv.listen(5)
@@ -115,10 +115,10 @@ def listener_thread(port):
 
     while True:
         conn, addr = srv.accept()
-        threading.Thread(target=handle_incoming, args=(conn,), daemon=True).start()
+        threading.Thread(target=handleIncoming, args=(conn,), daemon=True).start()
 
 
-def handle_incoming(conn):
+def handleIncoming(conn):
     try:
         key_len = int.from_bytes(conn.recv(4), "big")
         key_bytes = conn.recv(key_len)
@@ -152,7 +152,7 @@ def handle_incoming(conn):
     finally:
         conn.close()
 
-def send_message(pu_target, ip_target, port_target, msg):
+def sendMsg(pu_target, ip_target, port_target, msg):
     session_hex = DES.generateRandomKey()
     session_bin = DES.hexToBin(session_hex)
     round_keys = des_crypto.keySchedule(session_bin)
@@ -180,7 +180,7 @@ def send_message(pu_target, ip_target, port_target, msg):
 
     sock.close()
 
-def chat_loop(username):
+def chat(username):
     print("Type: send | quit")
 
     while True:
@@ -194,8 +194,8 @@ def chat_loop(username):
             target = input("Send to who: ")
             msg = input("Message: ")
 
-            pu_target, ip_target, port_target = get_user_auth(target)
-            send_message(pu_target, ip_target, port_target, msg)
+            pu_target, ip_target, port_target = getUserAuth(target)
+            sendMsg(pu_target, ip_target, port_target, msg)
             print("[CLIENT] Sent!")
 
 def main():
@@ -208,17 +208,17 @@ def main():
     
     global AUTH_HOST, CHAT_HOST
     print("--- Setup Server Connection ---")
-    server_ip = input("Masukkan IP Server Azure (Enter utk default 104.214.178.240): ").strip()
+    server_ip = input("Masukkan IP: ").strip()
 
     AUTH_HOST = server_ip
     CHAT_HOST = server_ip
     
-    fetch_authority_pubkey()
+    fetchAuthPU()
 
-    threading.Thread(target=listener_thread, args=(port,), daemon=True).start()
+    threading.Thread(target=listenerThread, args=(port,), daemon=True).start()
     register_user(username, port)
 
-    chat_loop(username)
+    chat(username)
 
 
 if __name__ == "__main__":

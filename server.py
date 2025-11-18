@@ -1,4 +1,3 @@
-# server_authority_dynamic.py
 import socket
 import threading
 import json
@@ -19,7 +18,7 @@ my_pu, my_pr = RSA.generateKeyPair()
 logging.info(f"Authority public key (e,n): ({my_pu.e}, {my_pu.n})")
 
 
-def safe_send(conn, obj):
+def safeSend(conn, obj):
     try:
         conn.sendall(json.dumps(obj).encode())
         return True
@@ -28,7 +27,7 @@ def safe_send(conn, obj):
         return False
 
 
-def extract_json_packets(buffer):
+def extractJson(buffer):
     packets = []
     brace, start = 0, None
     for i, ch in enumerate(buffer):
@@ -45,7 +44,7 @@ def extract_json_packets(buffer):
     return packets, remainder
 
 
-def handle_chat_client(conn):
+def handleClient(conn):
     buffer = b""
 
     while True:
@@ -54,7 +53,7 @@ def handle_chat_client(conn):
             break
 
         buffer += data
-        packets, buffer = extract_json_packets(buffer)
+        packets, buffer = extractJson(buffer)
 
         for packet in packets:
             msg = json.loads(packet.decode())
@@ -71,7 +70,7 @@ def handle_chat_client(conn):
                 password = secrets.token_hex(16)
                 valid_credentials[username] = password
 
-                safe_send(conn, {"status": "registered", "password": password})
+                safeSend(conn, {"status": "registered", "password": password})
                 logging.info(f"[REGISTER] {username} registered pubkey & got password {password}")
 
                 clients[username] = conn
@@ -84,25 +83,25 @@ def handle_chat_client(conn):
                 password = msg["password"]
 
                 if valid_credentials.get(username) == password:
-                    safe_send(conn, {"status": "authenticated"})
+                    safeSend(conn, {"status": "authenticated"})
                     clients[username] = conn
                     logging.info(f"[LOGIN] User {username} authenticated")
                 else:
-                    safe_send(conn, {"status": "unauthorized"})
+                    safeSend(conn, {"status": "unauthorized"})
                     logging.warning(f"[LOGIN FAIL] {username} wrong password")
                 continue
 
             if msg.get("type") == "chat":
                 to = msg["to"]
                 if to in clients and clients[to]:
-                    safe_send(clients[to], msg)
+                    safeSend(clients[to], msg)
                 else:
                     queued.setdefault(to, []).append(msg)
                 continue
 
     conn.close()
 
-def auth_dispatcher(conn):
+def authDispatch(conn):
     try:
         req = conn.recv(1024).decode().strip()
 
@@ -157,7 +156,7 @@ def main():
         s.listen(5)
         while True:
             conn, _ = s.accept()
-            threading.Thread(target=auth_dispatcher, args=(conn,), daemon=True).start()
+            threading.Thread(target=authDispatch, args=(conn,), daemon=True).start()
 
     def chat_server_thread():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -165,7 +164,7 @@ def main():
         s.listen(5)
         while True:
             conn, _ = s.accept()
-            threading.Thread(target=handle_chat_client, args=(conn,), daemon=True).start()
+            threading.Thread(target=handleClient, args=(conn,), daemon=True).start()
 
     threading.Thread(target=auth_server_thread, daemon=True).start()
     threading.Thread(target=chat_server_thread, daemon=True).start()
