@@ -1,174 +1,225 @@
-import threading
+# client_dynamic_final.py
 import socket
+import threading
+import json
 import RSA
 import DES
 import sys
-import secrets
 
 rsa_crypto = RSA.rsa()
 des_crypto = DES.des()
-user_cache = {}
+
 AUTH_HOST = "127.0.0.1"
-AUTH_PORT = 5000
-ADDR = "0.0.0.0"
+AUTH_PORT = 3000
+CHAT_HOST = "127.0.0.1"
+CHAT_PORT = 3001
+
 authority_pu = None
 my_pu, my_pr = RSA.generateKeyPair()
+user_password = None
+user_cache = {}
 
-def parse(data):
-    parts = data.split("|")
-    if len(parts) != 4:
-        raise ValueError("Invalid data format from authority")
-    e = int(parts[0])
-    n = int(parts[1])
-    ip = parts[2]
-    port = int(parts[3])
-    return (e, n), ip, port
+def parse_target(payload):
+    e, n, ip, port = payload.split("|")
+    return (int(e), int(n)), ip, int(port)
 
-def recvExact(conn, n):
-    data = b""
-    while len(data) < n:
-        packet = conn.recv(n-len(data))
-        if not packet:
-            return None
-        data += packet
-    return data
+def fetch_authority_pubkey():
+    global authority_pu
 
-def listener_init(PORT):
-    socket_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socket_listener.bind((ADDR, PORT))    
-    socket_listener.listen()
-    
-    print(f"[Responder:{PORT}] Ready to receive message...")
-    
-    while True:
-        try:
-            conn, addr = socket_listener.accept()
-            print(f"[Responeder] Connection accepted form {addr[0]}:{addr[1]}")
-            handler_thread = threading.Thread(target=handle_incoming_conn, args=(conn, my_pr))
-            handler_thread.start()
-        except Exception as e:
-            print(f"[Responder] Error: {e}")
-            
-
-def handle_incoming_conn(conn, my_key):
     try:
-        encrypted_des_key = recvExact(conn, 256)
-        des_key_int = RSA.byteToInt(encrypted_des_key)
-        print(f"[HANDLER] Decrypting DES...")
-        des_key_str = rsa_crypto.decrypt(des_key_int, my_key)
-        des_key_str = des_key_str.zfill(64)
-        
-        round_keys = des_crypto.keySchedule(des_key_str)
-        decrypted_bin = ""
+        sock = socket.create_connection((AUTH_HOST, AUTH_PORT))
+        sock.sendall(b"GETPUBKEY")
+        data = sock.recv(4096).decode().strip()
+        sock.close()
 
-        while True:
-            encrypted_hex = recvExact(conn, 16)
-            if not encrypted_hex:
-                break
-            
-            encrypted_hex = encrypted_hex.decode("utf-8")
-            encrypted_bin = DES.hexToBin(encrypted_hex)
-                
-            plain_block = des_crypto.decrypt(encrypted_bin, round_keys)
-            decrypted_bin += plain_block
-            
-        print(f"[HANDLER] Binary received: {decrypted_bin}")
-        unpadded_bin = DES.removePadding(decrypted_bin)
-            
-        msg = DES.binToASCII(unpadded_bin)
-            
-            
-        print(f"\n[NEW MESSAGE] {msg}")
-            
+        if "|" not in data:
+            raise RuntimeError("Invalid authority pubkey format from server")
+
+        e_str, n_str = data.split("|", 1)
+        e = int(e_str)
+        n = int(n_str)
+        print(f"e adalah {e} n adalah {n}")
+
+        authority_pu = RSA.PU(e, n)
+        print(f"[Client] Authority Public Key Loaded dynamically: e={e}, n={n}")
+
     except Exception as e:
-        print(f"[HANDLER] Error while receiving message: {e}")
-    finally:
-        conn.close()
+        print("[ERROR] Failed to fetch authority public key:", e)
+        sys.exit(1)
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
     
-def send_messages(pu_key_target, ip_target, port_target, msg):
-    session_key = DES.generateRandomKey()
-    round_keys = des_crypto.keySchedule(session_key)
-    msg_bin = DES.ASCIItoBin(msg)
-    
-    padded_bin = DES.addPadding(msg_bin)
-    
-    block_list = DES.splitBlocks(padded_bin)
-    des_key_encrypted = rsa_crypto.encrypt(session_key, pu_key_target)
-    des_key_bytes = RSA.intToByte(des_key_encrypted)
-    
-    socket_target = socket.create_connection((ip_target, port_target))
-    socket_target.send(des_key_bytes)
-    
-    for blocks in block_list:
-        encrypted_bin_block = des_crypto.encrypt(blocks, round_keys)
-        encrypted_hex_block = DES.binToHex(encrypted_bin_block)
-        socket_target.send(encrypted_hex_block.encode("utf-8"))
-    
-    socket_target.close()
-    
-def initiate_chat():
-    username = input("Who to send: ")
-    msg = input("Isi pesannya: ") 
-    
-    print(f"Request sent")
-    target_info = get_user_authority(username)
-    print("Key received. Start sending messages...")
-    send_messages(target_info.pu_key, target_info.ip, target_info.port, msg)
-    print("Message sent")
-    
-def get_user_authority(username):
+def register_user(username, port):
+    global user_password
+
+    s = socket.create_connection((CHAT_HOST, CHAT_PORT))
+    my_ip = get_local_ip()
+    payload = {
+        "type": "register",
+        "username": username,
+        "e": my_pu.e,
+        "n": my_pu.n,
+        "ip": my_ip,
+        "port": port
+    }
+
+    s.sendall(json.dumps(payload).encode())
+    reply = json.loads(s.recv(4096).decode())
+    s.close()
+
+    if reply["status"] == "registered":
+        user_password = reply["password"]
+        print(f"[CLIENT] Registered! Assigned password = {user_password}")
+    else:
+        print("[CLIENT] Registration failed")
+        sys.exit(1)
+
+def get_user_auth(username):
     if username in user_cache:
         return user_cache[username]
-    
-    auth_sock = socket.create_connection((AUTH_HOST, AUTH_PORT))
-    try:
-        auth_sock.send(f"GETKEY {username}".encode("utf-8"))
-        cert = auth_sock.recv(8192)
-    finally:
-        auth_sock.close()
+
+    s = socket.create_connection((AUTH_HOST, AUTH_PORT))
+    s.sendall(f"GETKEY {username}".encode())
+    cert = s.recv(8192)
+    s.close()
 
     if b"||" not in cert:
-        raise ValueError("Invalid certificate format")
-    payload_bytes, sig_bytes = cert.split(b"||", 1)
-    data_target = payload_bytes.decode("utf-8")
-    sign_int = int(sig_bytes.decode("utf-8"))
+        raise RuntimeError("Invalid CERT format")
 
-    if authority_pu is None:
-        raise RuntimeError("authority_pu not configured in client")
+    payload, signature = cert.split(b"||", 1)
+    payload_str = payload.decode()
+    sig_int = int(signature.decode())
 
-    if not rsa_crypto.verify(data_target, sign_int, RSA.PU(authority_pu[0], authority_pu[1])):
-        raise ValueError("Authority signature invalid")
+    if not rsa_crypto.verify(payload_str, sig_int, authority_pu):
+        raise RuntimeError("Authority signature invalid!")
 
-    pu_target, ip_target, port_target = parse(data_target)
-    info = (pu_target, ip_target, port_target)
-    user_cache[username] = info
-    return info
+    pu_target, ip_target, port_target = parse_target(payload_str)
+    user_cache[username] = (pu_target, ip_target, port_target)
+    return user_cache[username]
 
-def main_menu_loop():
-    print("Type 'send' to send message, 'quit' to exit.")
+
+def listener_thread(port):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("0.0.0.0", port))
+    srv.listen(5)
+
+    print(f"[CLIENT] Listening on port {port} ...")
+
     while True:
-        cmd = input("> ").strip().lower()
+        conn, addr = srv.accept()
+        threading.Thread(target=handle_incoming, args=(conn,), daemon=True).start()
+
+
+def handle_incoming(conn):
+    try:
+        key_len = int.from_bytes(conn.recv(4), "big")
+        key_bytes = conn.recv(key_len)
+        key_int = int.from_bytes(key_bytes, "big")
+        session_hex = rsa_crypto.decrypt(key_int, my_pr)
+
+        session_bin = DES.hexToBin(session_hex)
+        round_keys = des_crypto.keySchedule(session_bin)
+
+        block_count = int.from_bytes(conn.recv(4), "big")
+        blocks = []
+
+        for _ in range(block_count):
+            blk = conn.recv(16).decode() 
+            blocks.append(blk)
+
+        bin_full = ""
+        for blk in blocks:
+            bin_blk = DES.hexToBin(blk)
+            dec_blk = des_crypto.decrypt(bin_blk, round_keys)
+            bin_full += dec_blk
+
+        clean = DES.removePadding(bin_full)
+        msg = DES.binToASCII(clean)
+
+        print(f"\n📩 New Message: {msg}\n> ", end="")
+
+    except Exception as e:
+        print("[ERROR receiving]:", e)
+
+    finally:
+        conn.close()
+
+def send_message(pu_target, ip_target, port_target, msg):
+    session_hex = DES.generateRandomKey()
+    session_bin = DES.hexToBin(session_hex)
+    round_keys = des_crypto.keySchedule(session_bin)
+
+    pu_e, pu_n = pu_target
+    pu_obj = RSA.PU(pu_e, pu_n)
+    enc_key_int = rsa_crypto.encrypt(session_hex, pu_obj)
+    key_bytes = RSA.intToByte(enc_key_int)
+
+    bin_msg = DES.ASCIItoBin(msg)
+    padded = DES.addPadding(bin_msg)
+    blocks = DES.splitBlocks(padded)
+
+    sock = socket.create_connection((ip_target, port_target))
+
+    sock.sendall(len(key_bytes).to_bytes(4, "big"))
+    sock.sendall(key_bytes)
+
+    sock.sendall(len(blocks).to_bytes(4, "big"))
+
+    for blk in blocks:
+        enc_blk = des_crypto.encrypt(blk, round_keys)
+        hex_blk = DES.binToHex(enc_blk)
+        sock.sendall(hex_blk.encode())
+
+    sock.close()
+
+def chat_loop(username):
+    print("Type: send | quit")
+
+    while True:
+        cmd = input("> ").lower().strip()
+
+        if cmd == "quit":
+            print("Bye!")
+            return
+
         if cmd == "send":
-            initiate_chat()
-        elif cmd == "quit" or cmd == "exit":
-            print("Bye")
-            break
-        else:
-            print("Unknown command. Use 'send' or 'quit'.")
+            target = input("Send to who: ")
+            msg = input("Message: ")
+
+            pu_target, ip_target, port_target = get_user_auth(target)
+            send_message(pu_target, ip_target, port_target, msg)
+            print("[CLIENT] Sent!")
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python client.py Username Port")
-        sys.exit(1)
-    my_username = sys.argv[1]
-    my_port = int(sys.argv[2])
+        print("Usage: python client_dynamic_final.py <username> <port>")
+        return
+
+    username = sys.argv[1]
+    port = int(sys.argv[2])
     
-    listener = threading.Thread(target=listener_init, args=(my_port,), daemon=True)
-    listener.start()
+    global AUTH_HOST, CHAT_HOST
+    print("--- Setup Server Connection ---")
+    server_ip = input("Masukkan IP Server Azure (Enter utk default 104.214.178.240): ").strip()
+
+    AUTH_HOST = server_ip
+    CHAT_HOST = server_ip
     
-    main_menu_loop()
+    fetch_authority_pubkey()
+
+    threading.Thread(target=listener_thread, args=(port,), daemon=True).start()
+    register_user(username, port)
+
+    chat_loop(username)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python client.py Username Port")
-        sys.exit(1)
     main()
