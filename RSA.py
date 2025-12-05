@@ -121,7 +121,7 @@ class rsa():
         signature_hashed_number = pow(int_sign, e, n)
         
         if hash_number == signature_hashed_number:
-            print("Verification succes!")
+            print("Verification success!")
             return True
         else:
             print("Verification failed!")

@@ -11,4 +11,4 @@ def get_wifi_ip():
         s.close()
     return ip
 
-print(f"Server IP (Kasih ini ke temen lo): {get_wifi_ip()}")
+print(f"Server IP: {get_wifi_ip()}")

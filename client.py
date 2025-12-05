@@ -85,13 +85,26 @@ def getUserAuth(username):
     if username in user_cache:
         return user_cache[username]
 
-    s = socket.create_connection((AUTH_HOST, AUTH_PORT))
-    s.sendall(f"GETKEY {username}".encode())
-    cert = s.recv(8192)
-    s.close()
+    try:
+        s = socket.create_connection((AUTH_HOST, AUTH_PORT))
+        s.sendall(f"GETKEY {username}".encode())
+        cert = s.recv(8192)
+        s.close()
+    except Exception as e:
+        print(f"[ERROR] Cannot connect to Authority: {e}")
+        return None
 
+    if not cert:
+        print(f"[CLIENT] Authority returned empty response for {username}")
+        return None
+
+    if cert.startswith(b"ERROR"):
+        print(f"[CLIENT] User: {username} not found in authority!")
+        return None
+    
     if b"||" not in cert:
         raise RuntimeError("Invalid CERT format")
+    
 
     payload, signature = cert.split(b"||", 1)
     payload_str = payload.decode()
@@ -126,10 +139,17 @@ def handleIncoming(conn):
 
         session_bin = DES.hexToBin(session_hex)
         round_keys = des_crypto.keySchedule(session_bin)
-
+        
+        sig_len = int.from_bytes(conn.recv(4),"big")
+        sig_bytes = conn.recv(sig_len)
+        sig_int = int.from_bytes(sig_bytes, "big")
+        
+        name_len = int.from_bytes(conn.recv(4), "big")
+        sender = conn.recv(name_len).decode().lower()
+        
+        
         block_count = int.from_bytes(conn.recv(4), "big")
         blocks = []
-
         for _ in range(block_count):
             blk = conn.recv(16).decode() 
             blocks.append(blk)
@@ -142,67 +162,102 @@ def handleIncoming(conn):
 
         clean = DES.removePadding(bin_full)
         msg = DES.binToASCII(clean)
-
-        print(f"\n📩 New Message: {msg}\n> ", end="")
-
+        
+        print("[VERIFYING] Checking signature...")
+        
+        pu_sender, _, _ = getUserAuth(sender)
+        pu_sender_obj = RSA.PU(pu_sender[0], pu_sender[1])
+        
+        if rsa_crypto.verify(msg, sig_int, pu_sender_obj):
+            print(f"[CLIENT] Signature from {sender} verified!")
+            print(f"\n📩 New Message: {msg}\n> ", end="")
+        else:
+            print(f"[CLIENT] Signature from {sender} invalid!")
     except Exception as e:
         print("[ERROR receiving]:", e)
 
     finally:
         conn.close()
 
-def sendMsg(pu_target, ip_target, port_target, msg):
-    session_hex = DES.generateRandomKey()
-    session_bin = DES.hexToBin(session_hex)
-    round_keys = des_crypto.keySchedule(session_bin)
+def sendMsg(pu_target, ip_target, port_target, msg, username, target):
+    try:  
+        sig_int = rsa_crypto.sign(msg, my_pr)
+        sig_bytes = RSA.intToByte(sig_int)
+        
+        session_hex = DES.generateRandomKey()
+        session_bin = DES.hexToBin(session_hex)
+        round_keys = des_crypto.keySchedule(session_bin)
 
-    pu_e, pu_n = pu_target
-    pu_obj = RSA.PU(pu_e, pu_n)
-    enc_key_int = rsa_crypto.encrypt(session_hex, pu_obj)
-    key_bytes = RSA.intToByte(enc_key_int)
+        pu_e, pu_n = pu_target
+        pu_obj = RSA.PU(pu_e, pu_n)
+        enc_key_int = rsa_crypto.encrypt(session_hex, pu_obj)
+        key_bytes = RSA.intToByte(enc_key_int)
 
-    bin_msg = DES.ASCIItoBin(msg)
-    padded = DES.addPadding(bin_msg)
-    blocks = DES.splitBlocks(padded)
+        bin_msg = DES.ASCIItoBin(msg)
+        padded = DES.addPadding(bin_msg)
+        blocks = DES.splitBlocks(padded)
 
-    sock = socket.create_connection((ip_target, port_target))
+        sock = socket.create_connection((ip_target, port_target))
 
-    sock.sendall(len(key_bytes).to_bytes(4, "big"))
-    sock.sendall(key_bytes)
+        sock.sendall(len(key_bytes).to_bytes(4, "big"))
+        sock.sendall(key_bytes)
+        
+        sock.sendall(len(sig_bytes).to_bytes(4, "big"))
+        sock.sendall(sig_bytes)
+        
+        username_bytes = username.encode()
+        sock.sendall(len(username_bytes).to_bytes(4, "big"))
+        sock.sendall(username_bytes)
 
-    sock.sendall(len(blocks).to_bytes(4, "big"))
+        sock.sendall(len(blocks).to_bytes(4, "big"))
 
-    for blk in blocks:
-        enc_blk = des_crypto.encrypt(blk, round_keys)
-        hex_blk = DES.binToHex(enc_blk)
-        sock.sendall(hex_blk.encode())
+        for blk in blocks:
+            enc_blk = des_crypto.encrypt(blk, round_keys)
+            hex_blk = DES.binToHex(enc_blk)
+            sock.sendall(hex_blk.encode())
 
-    sock.close()
+        sock.close()
+        return True
+    except ConnectionRefusedError:
+        print(f"[ERROR] User {target} is offline or unreachable!")
+        return False
+    except Exception as e:
+        print("[ERROR] Sending message failed:", e)
+        return False
 
-def chat():
+def chat(username):
+    print(f"=== Welcome, {username}! ===") 
     print("Type: send | quit")
 
     while True:
-        cmd = input("> ").lower().strip()
+        print("> ", end="")
+        cmd = input().lower().strip()
 
         if cmd == "quit":
             print("Bye!")
             return
 
         if cmd == "send":
-            target = input("Send to who: ")
+            target = input("Send to who: ").strip().lower()
             msg = input("Message: ")
-
-            pu_target, ip_target, port_target = getUserAuth(target)
-            sendMsg(pu_target, ip_target, port_target, msg)
-            print("[CLIENT] Sent!")
+            
+            target_stats = getUserAuth(target)
+            
+            if target_stats is None:
+                print(f"[CLIENT] Cannot send message, user {target} not found!")
+                continue
+            
+            pu_target, ip_target, port_target = target_stats
+            is_sent = sendMsg(pu_target, ip_target, port_target, msg, username, target)
+            if is_sent:
+                print(f"[CLIENT] Sent to {target}!")
 
 def main():
     if len(sys.argv) != 3:
         print("Usage: python client_dynamic_final.py <username> <port>")
         return
 
-    username = sys.argv[1]
+    username = sys.argv[1].lower()
     port = int(sys.argv[2])
     
     global AUTH_HOST, CHAT_HOST
