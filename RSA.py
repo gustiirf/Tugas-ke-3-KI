@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import math
 
 def byteToInt(dataByte):
     return int.from_bytes(dataByte,"big")

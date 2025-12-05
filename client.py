@@ -1,4 +1,3 @@
-# client_dynamic_final.py
 import socket
 import threading
 import json
@@ -57,7 +56,7 @@ def getLocalIP():
     except:
         return "127.0.0.1"
     
-def register_user(username, port):
+def registerUser(username, port):
     global user_password
 
     s = socket.create_connection((CHAT_HOST, CHAT_PORT))
@@ -180,7 +179,7 @@ def sendMsg(pu_target, ip_target, port_target, msg):
 
     sock.close()
 
-def chat(username):
+def chat():
     print("Type: send | quit")
 
     while True:
@@ -216,7 +215,7 @@ def main():
     fetchAuthPU()
 
     threading.Thread(target=listenerThread, args=(port,), daemon=True).start()
-    register_user(username, port)
+    registerUser(username, port)
 
     chat(username)
 

@@ -1,5 +1,4 @@
 import random
-import string
 
 IP = [
         58, 50, 42, 34, 26, 18, 10, 2,
@@ -156,27 +155,14 @@ def binToASCII(bin_str):
     return ''.join(out)
 
 def binToHex(binary_string):
-    """
-    Mengubah string biner (misal "11110000") jadi Hex (misal "F0").
-    Otomatis nambah padding '0' di depan kalo panjang biner nggak kelipatan 4.
-    """
-    # 1. Pastikan panjang biner kelipatan 4
-    # (DES biasanya udah pas 64 bit, tapi ini jaga-jaga biar nggak crash)
     if len(binary_string) % 4 != 0:
         padding = 4 - (len(binary_string) % 4)
         binary_string = ("0" * padding) + binary_string
 
-    # 2. Hitung berapa karakter hex yang bakal dihasilkan
-    # (1 char hex = 4 bit)
     target_hex_len = len(binary_string) // 4
     
-    # 3. Konversi Biner -> Int -> Hex
-    # int(X, 2) = baca X sebagai basis 2
-    # format(Y, 'X') = ubah Y jadi Hex Huruf Besar (tanpa '0x')
     hex_string = format(int(binary_string, 2), 'X')
     
-    # 4. Pastikan panjangnya pas (pake leading zeros)
-    # Misal: biner "00001111" -> int 15 -> hex "F" -> zfill jadi "0F"
     return hex_string.zfill(target_hex_len)
 
 def ASCIItoBin(str):
